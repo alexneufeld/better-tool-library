@@ -338,7 +338,7 @@ class LibraryUI():
         try:
             library = serializer.deserialize_library_from_file(filename)
         except (OSError, KeyError) as e:
-            print("error importing file: {}".format(e))
+            print("error importing file: {}".format(repr(e)))
             return
 
         # Append every tool to the currently selected library.
@@ -427,7 +427,7 @@ class LibraryUI():
         try:
             self.serializer.import_tool_from_file(filename)
         except OSError as e:
-            print("error opening file: {}".format(e))
+            print("error opening file: {}".format(repr(e)))
         else:
             self.load()
 
@@ -516,7 +516,7 @@ class LibraryUI():
         try:
             self.serializer.import_shape_from_file(filename)
         except OSError as e:
-            print("error opening file: {}".format(e))
+            print("error opening file: {}".format(repr(e)))
         else:
             self.load()
 
