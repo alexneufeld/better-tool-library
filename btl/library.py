@@ -9,6 +9,7 @@ class Library(object):
         self.label = label
         self.tools = []
         self.tool_nos = {}  # Maps tool_no number to tool
+        self._tool_no_inc = 1
 
     def __str__(self):
         return '{} "{}"'.format(self.id, self.label)
@@ -30,30 +31,12 @@ class Library(object):
         return None
 
     def assign_new_tool_no(self, tool, tool_no=None):
-        if tool not in self.tools:
-            return
+        self.tool_nos[self._tool_no_inc] = tool
+        self._tool_no_inc += 1
 
-        # If no specific tool_no was requested, assign a new one.
-        if tool_no is None:
-            tool_no = self.get_next_tool_no()
-        elif self.tool_nos.get(tool_no) == tool:
-            return
-
-        # Otherwise, add the tool. Since the requested tool_no may already
-        # be in use, we need to account for that. In this case, we will
-        # add the removed tool into a new tool_no.
-        old_tool = self.tool_nos.pop(tool_no, None)
-        old_tool_no = self.get_tool_no_from_tool(tool)
-        if old_tool_no:
-            del self.tool_nos[old_tool_no]
-        self.tool_nos[tool_no] = tool
-        if old_tool:
-            self.assign_new_tool_no(old_tool)
-        return tool_no
 
     def add_tool(self, tool, tool_no=None):
-        if tool not in self.tools:
-            self.tools.append(tool)
+        self.tools.append(tool)
         self.assign_new_tool_no(tool, tool_no)
 
     def get_tools(self):
