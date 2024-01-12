@@ -1,7 +1,7 @@
 import os
 import json
 from pathlib import Path
-from PySide import QtGui, QtCore
+from PySide import QtGui, QtCore, QtWidgets
 from PySide.QtCore import Qt, QMimeData
 from PySide.QtGui import QApplication, QShortcut
 from ..i18n import translate
@@ -11,7 +11,7 @@ from ..fcutil import add_tool_to_job, get_jobs, get_active_job
 from .util import load_ui
 from .preferences import PreferencesDialog
 from .about import AboutDialog
-from .tablecell import TwoLineTableCell
+from .tablemodel import TableModel
 from .shapeselector import ShapeSelector
 from .tooleditor import ToolEditor
 from .libraryproperties import LibraryProperties
@@ -21,6 +21,7 @@ from .movetool import MoveToolDialog
 __dir__ = os.path.dirname(__file__)
 ui_path = os.path.join(__dir__, "library.ui")
 
+
 class LibraryUI():
     def __init__(self, db, serializer, standalone=False, parent=None):
         self.db = db
@@ -29,12 +30,9 @@ class LibraryUI():
         self.form = load_ui(ui_path, parent)
 
         self.form.buttonBox.clicked.connect(self.form.close)
-        self.form.listWidgetTools.itemDoubleClicked.connect(self.on_edit_tool_clicked)
-        self.form.listWidgetTools.itemSelectionChanged.connect(self.update_search)
-        self.form.listWidgetTools.setSelectionMode(
-            QtGui.QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.form.listWidgetTools.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.form.listWidgetTools.customContextMenuRequested.connect(self.on_right_click)
+        self.form.tableViewTools.doubleClicked.connect(self.on_edit_tool_clicked)
+        self.form.tableViewTools.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.form.tableViewTools.customContextMenuRequested.connect(self.on_right_click)
 
         self.form.lineEditSearch.setFocus()
         self.form.lineEditSearch.textChanged.connect(self.update_search)
@@ -79,20 +77,39 @@ class LibraryUI():
 
         self.load()
 
-        item = self.form.listWidgetTools.item(0)
-        if item:
-            self.form.listWidgetTools.setCurrentItem(item)
+        # set up some properties of the tool table view
+        # there is no selection model until load() is called
+        self.form.tableViewTools.selectionModel().selectionChanged.connect(self.update_search)
+        header = self.form.tableViewTools.horizontalHeader()
+        header.setSectionResizeMode(header.ResizeToContents)
+        header.setSectionResizeMode(2, header.Stretch)
+        header.setVisible(True)
+        self.form.tableViewTools.verticalHeader().setVisible(False)
+        # only allow selecting full rows
+        self.form.tableViewTools.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        # don't allow editing cells
+        self.form.tableViewTools.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        # select the first row if it exists
+        if self.form.tableViewTools.model().rowCount() > 0:
+            index = self.form.tableViewTools.model().index(0, 0)
+            self.form.tableViewTools.selectionModel().select(
+                index,
+                QtCore.QItemSelectionModel.SelectionFlags(
+                    int(
+                        QtCore.QItemSelectionModel.Select |
+                        QtCore.QItemSelectionModel.Rows
+                    )
+                )
+            )
 
     def _copy_tool(self):
-        library = self.get_selected_library()
-        items = self.form.listWidgetTools.selectedItems()
-        if not items:
+        tools = self.get_selected_tools()
+        if not tools:
             return
 
         tool_ids = []
         tool_str = []
-        for item in self.form.listWidgetTools.selectedItems():
-            tool = item.data(QtCore.Qt.UserRole)
+        for tool in tools:
             tool_ids.append(tool.id)
             tool_str.append(tool.to_string())
 
@@ -105,12 +122,11 @@ class LibraryUI():
 
     def _duplicate_tool(self):
         library = self.get_selected_library()
-        items = self.form.listWidgetTools.selectedItems()
-        if not items:
+        tools = self.get_selected_tools()
+        if not tools:
             return
 
-        for item in self.form.listWidgetTools.selectedItems():
-            tool = item.data(QtCore.Qt.UserRole)
+        for tool in tools:
             self.db.add_tool(tool.copy(), library)
 
         self.db.serialize(self.serializer)
@@ -137,16 +153,16 @@ class LibraryUI():
         self.load()
 
     def on_right_click(self, pos):
-        menu = QtGui.QMenu(self.form.listWidgetTools)
+        menu = QtGui.QMenu(self.form.tableViewTools)
         label = translate("btl", "Move to library...")
-        action = QtGui.QAction(label, self.form.listWidgetTools)
+        action = QtGui.QAction(label, self.form.tableViewTools)
         action.triggered.connect(self.on_move_tool_clicked)
         menu.addAction(action)
-        menu.exec_(self.form.listWidgetTools.mapToGlobal(pos))
+        menu.exec_(self.form.tableViewTools.mapToGlobal(pos))
 
     def get_selected_tools(self):
-        return [i.data(QtCore.Qt.UserRole)
-                for i in self.form.listWidgetTools.selectedItems()]
+        indexes = self.form.tableViewTools.selectionModel().selectedRows()
+        return [self.table_model._data[x.row()] for x in indexes]
 
     def on_move_tool_clicked(self):
         tools = self.get_selected_tools()
@@ -173,7 +189,7 @@ class LibraryUI():
         # it doesn't support that.
         has_job = self.standalone or bool(get_jobs())
         library = self.get_selected_library()
-        tool_selected = bool(self.form.listWidgetTools.selectedItems())
+        tool_selected = bool(self.get_selected_tools())
         self.form.actionDeleteLibrary.setEnabled(library is not None)
         self.form.actionEditLibrary.setEnabled(library is not None)
         self.form.actionExportLibrary.setEnabled(library is not None)
@@ -194,7 +210,7 @@ class LibraryUI():
         combo.clear()
         combo.addItem(translate('btl', 'Unused tools'))
         combo.insertSeparator(1)
-        libraries = sorted(self.db.get_libraries(), key=lambda l: l.label)
+        libraries = sorted(self.db.get_libraries(), key=lambda lib: lib.label)
         for library in libraries:
             combo.addItem(library.label, library.id)
 
@@ -222,38 +238,23 @@ class LibraryUI():
         else:
             tools = self.db.get_unused_tools()
 
-        # Update the tool list.
-        listwidget = self.form.listWidgetTools
-        listwidget.setStyleSheet("margin: 1px")
-        listwidget.clear()
-        for tool in sorted(tools, key=lambda x: x.label, reverse=True):
-            cell = TwoLineTableCell()
-            cell.set_upper_text(tool.label)
-            cell.set_lower_text(tool.shape.get_param_summary())
-            cell.set_icon_from_shape(tool.shape)
-
-            if library:
-                tool_no = library.get_tool_no_from_tool(tool)
-                cell.set_tool_no(tool_no)
-                cell.set_pocket(tool.pocket)
-
-            widget_item = QtGui.QListWidgetItem(listwidget)
-            widget_item.setSizeHint(cell.sizeHint())
-            widget_item.setData(QtCore.Qt.UserRole, tool)
-            listwidget.addItem(widget_item)
-            listwidget.setItemWidget(widget_item, cell)
+        self.table_model = TableModel(tools)
+        self.form.tableViewTools.setModel(self.table_model)
 
         self.update_search()
 
     def update_search(self):
-        listwidget = self.form.listWidgetTools
         term = self.form.lineEditSearch.text()
-        for i in range(listwidget.count()):
-            item = listwidget.item(i)
-            cell = listwidget.itemWidget(item)
-            if cell:
-                cell.highlight(term)
-                item.setHidden(not cell.contains_text(term))
+        if term:
+            for r in range(self.table_model.rowCount()):
+                desc = self.table_model.data(
+                        self.table_model.createIndex(r, 2),
+                        Qt.DisplayRole
+                )
+                self.form.tableViewTools.setRowHidden(r, term not in desc)
+        else:
+            for r in range(self.table_model.rowCount()):
+                self.form.tableViewTools.setRowHidden(r, False)
         self.update_button_state()
 
     def show(self):
@@ -375,20 +376,19 @@ class LibraryUI():
 
         library.serialize(serializer, filename)
 
-    def get_tool_list_item(self, tool):
-        listwidget = self.form.listWidgetTools
-        for row in range(listwidget.count()):
-            item = listwidget.item(row)
-            current_tool = item.data(QtCore.Qt.UserRole)
-            if current_tool == tool:
-                return item
-        return None
-
     def select_tool(self, tool):
-        item = self.get_tool_list_item(tool)
-        listwidget = self.form.listWidgetTools
-        listwidget.setCurrentItem(item)
-        listwidget.scrollToItem(item, QtGui.QAbstractItemView.EnsureVisible)
+        row = self.table_model._data.index(tool)
+        index = self.form.tableViewTools.model().index(row, 0)
+        self.form.tableViewTools.selectionModel().select(
+            index,
+            QtCore.QItemSelectionModel.SelectionFlags(
+                int(
+                    QtCore.QItemSelectionModel.Select |
+                    QtCore.QItemSelectionModel.Rows
+                )
+            )
+        )
+        self.form.tableViewTools.scrollTo(index)
 
     def on_create_tool_clicked(self):
         selector = ShapeSelector(self.db, self.serializer)
@@ -431,12 +431,10 @@ class LibraryUI():
         else:
             self.load()
 
-    def on_edit_tool_clicked(self):
-        items = self.form.listWidgetTools.selectedItems()
-        if not items:
-            return
-
-        tool = items[0].data(QtCore.Qt.UserRole)
+    def on_edit_tool_clicked(self, model_index):
+        # the act of double-clicking always selects a single row,
+        #  so this will always be a list of len() == 1
+        tool = self.get_selected_tools()[0]
         library = self.get_selected_library()
         if library:
             tool_no = library.get_tool_no_from_tool(tool)
@@ -451,8 +449,6 @@ class LibraryUI():
             return
 
         self.db.add_tool(tool)
-        if library:
-            library.assign_new_tool_no(tool, editor.tool_no)
 
         self.db.serialize(self.serializer)
         self.load()
@@ -460,28 +456,28 @@ class LibraryUI():
 
     def on_delete_tool_clicked(self):
         library = self.get_selected_library()
-        items = self.form.listWidgetTools.selectedItems()
-        if not items:
+        tools = self.get_selected_tools()
+        if not tools:
             return
-        elif len(items) == 1 and library:
-            tool = items[0].data(QtCore.Qt.UserRole)
+        elif len(tools) == 1 and library:
+            tool = tools[0]
             tool_lbl = f'<b>{tool.get_label()}</b>'
             lib_lbl = f'<b>{library.label}</b>'
             msg = translate('btl', 'Delete tool {tool} from library {library}?')
             msg = msg.format(tool=tool_lbl, library=lib_lbl)
-        elif len(items) == 1:
-            tool = items[0].data(QtCore.Qt.UserRole)
+        elif len(tools) == 1:
+            tool = tools[0]
             tool_lbl = f'<b>{tool.get_label()}</b>'
             msg = translate('btl', 'Delete unused tool {tool}?')
             msg = msg.format(tool=tool_lbl)
-        elif len(items) > 1 and library:
-            tool = items[0].data(QtCore.Qt.UserRole)
+        elif len(tools) > 1 and library:
+            tool = tools[0]
             lib_lbl = f'<b>{library.label}</b>'
             msg = translate('btl', 'Delete {n} selected tools from library {library}?')
-            msg = msg.format(n=len(items), library=lib_lbl)
+            msg = msg.format(n=len(tools), library=lib_lbl)
         else:
             msg = translate('btl', 'Delete {} unused tools from the library?')
-            msg = msg.format(len(items))
+            msg = msg.format(len(tools))
 
         msgBox = QtGui.QMessageBox()
         title = translate('btl', 'Confirm tool deletion')
@@ -494,8 +490,7 @@ class LibraryUI():
         if response != QtGui.QMessageBox.AcceptRole:
             return
 
-        for item in self.form.listWidgetTools.selectedItems():
-            tool = item.data(QtCore.Qt.UserRole)
+        for tool in tools:
             self.db.remove_tool(tool, library)
 
         self.db.serialize(self.serializer)
@@ -522,8 +517,8 @@ class LibraryUI():
 
     def on_add_to_job_clicked(self):
         library = self.get_selected_library()
-        items = self.form.listWidgetTools.selectedItems()
-        if not items:
+        tools = self.get_selected_tools()
+        if not tools:
             return
 
         jobs = [get_active_job()]
@@ -533,8 +528,7 @@ class LibraryUI():
             return
 
         for job in jobs:
-            for item in items:
-                tool = item.data(QtCore.Qt.UserRole)
+            for tool in tools:
                 tool_no = library.get_tool_no_from_tool(tool)
                 assert tool_no is not None
                 add_tool_to_job(job, tool, tool_no)
