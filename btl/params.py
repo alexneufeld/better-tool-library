@@ -11,8 +11,10 @@ class Param(object):
     choices = None
     group = None
 
+    label_regex = re.compile(r'([A-Z])')
+
     def __init__(self, name=None, unit=None, v=None):
-        label = re.sub(r'([A-Z])', r' \1', name or '').strip().capitalize()
+        label = re.sub(self.label_regex, r' \1', name or '').strip().capitalize()
         self.name = self.name if name is None else name
         self.label = self.label if name is None else label
         self.unit = self.unit if unit is None else unit
