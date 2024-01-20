@@ -3,7 +3,7 @@ import glob
 from zipfile import ZipFile
 import json
 from .. import Library, Tool
-from ..params import Param, DistanceParam, IntParam
+from ..params import Param, DistanceParam, IntParam, BoolParam
 from ..toolmaterial import HSS, Carbide
 from .. import Shape
 from .serializer import Serializer
@@ -18,8 +18,8 @@ UNIT_MAP = {
 
 # map the type of the tool in a .tools database to a shape file.
 # some user visible tool types in fusion have identical internal representation
-#  I.E.: chamfer mills & countersinks
-# - custom form tools, thread mills, and taps are not supported yet
+#  I.E.: chamfer mills & spot_drills
+# Custom form tools, thread mills, and taps are not supported yet
 # (thread mills can be single or multi-pitch, we would need to generate the
 # shape files at runtime in order to suppport them properly)
 SHAPE_FILES = {
@@ -41,11 +41,11 @@ SHAPE_FILES = {
     "counter bore": "flat_end_mill",
     "center drill": "center_drill",
     "spot drill": "chamfer_mill",
-    "counter sink": None,
+    "counter sink": "counter_sink",
     "drill": "drill",
     "reamer": "reamer",
-    "tap left hand": None,
-    "tap right hand": None,
+    "tap left hand": "tap",
+    "tap right hand": "tap",
 }
 
 
@@ -104,13 +104,12 @@ class FusionSerializer(Serializer):
                     f"with unimplemented type '{toolitem['type']}'\n"
                 )
                 continue
-            tname = "fusion_" + shapefile
+            tname = "_fusion_" + shapefile
             tpath = os.path.join(
                 os.path.dirname(os.path.dirname(__file__)),
                 "resources/shapes",
-                "fusion_" + shapefile + ".FCStd",
+                tname + ".fcstd",
             )
-            # Console.PrintMessage(f"Creating a tool shape... name will be '{tname}', filepath is '{tpath}'\n")
             toolshape = Shape(tname, tpath)
             tool = Tool(toolitem["description"], toolshape, filename=filename)
             # set a descriptive label if one is not present in the json data
@@ -230,6 +229,35 @@ class FusionSerializer(Serializer):
                         DistanceParam(
                             name="TipDiameter", unit=lunit, v=geom["tip-diameter"]
                         ),
+                    )
+                case "tap right hand":
+                    tool.shape.set_param(
+                        "RightHanded",
+                        BoolParam(name="RightHanded", v=True),
+                    )
+                    tool.shape.set_param(
+                        "ThreadPitch",
+                        DistanceParam(name="ThreadPitch", unit=lunit, v=geom["TP"]),
+                    )
+                case "tap left hand":
+                    tool.shape.set_param(
+                        "RightHanded",
+                        BoolParam(name="RightHanded", v=False),
+                    )
+                    tool.shape.set_param(
+                        "ThreadPitch",
+                        DistanceParam(name="ThreadPitch", unit=lunit, v=geom["TP"]),
+                    )
+                case "counter sink":
+                    tool.shape.set_param(
+                        "TipDiameter",
+                        DistanceParam(
+                            name="TipDiameter", unit=lunit, v=geom["tip-diameter"]
+                        ),
+                    )
+                    tool.shape.set_param(
+                        "TipAngle",
+                        Param(name="TipAngle", unit="deg", v=geom["SIG"] * 2),
                     )
                 case _ as unknown_tool_type:
                     raise ValueError(f"Unknown tool type: {unknown_tool_type}")
