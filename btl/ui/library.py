@@ -79,7 +79,9 @@ class LibraryUI():
 
         # set up some properties of the tool table view
         # there is no selection model until load() is called
-        self.form.tableViewTools.selectionModel().selectionChanged.connect(self.update_search)
+        # there may be no selection model if there are no tools
+        selection_model = self.form.tableViewTools.selectionModel()
+        selection_model.selectionChanged.connect(self.update_search)
         header = self.form.tableViewTools.horizontalHeader()
         header.setSectionResizeMode(header.ResizeToContents)
         header.setSectionResizeMode(2, header.Stretch)
@@ -161,8 +163,10 @@ class LibraryUI():
         menu.exec_(self.form.tableViewTools.mapToGlobal(pos))
 
     def get_selected_tools(self):
-        indexes = self.form.tableViewTools.selectionModel().selectedRows()
-        return [self.table_model._data[x.row()] for x in indexes]
+        if selection_model := self.form.tableViewTools.selectionModel():
+            indexes = selection_model.selectedRows()
+            return [self.table_model._data[x.row()] for x in indexes]
+        return []
 
     def on_move_tool_clicked(self):
         tools = self.get_selected_tools()
@@ -213,6 +217,7 @@ class LibraryUI():
         libraries = sorted(self.db.get_libraries(), key=lambda lib: lib.label)
         for library in libraries:
             combo.addItem(library.label, library.id)
+        self.update_tool_list()
 
         # This also triggers an update of the tool list.
         combo.setCurrentIndex(index)
